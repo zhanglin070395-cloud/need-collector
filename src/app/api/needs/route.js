@@ -1,22 +1,28 @@
 import { NextResponse } from "next/server";
-import prisma from "@/lib/prisma";
+import { supabase } from "@/lib/supabase";
 
-// GET  —— 获取所有需求列表
+// GET —— 获取所有需求列表
 export async function GET() {
   try {
-    const needs = await prisma.need.findMany({
-      include: {
-        submitter: true,      // 顺便查出提交人信息
-        _count: {
-          select: { votes: true }  // 顺便数出投票数
-        }
-      },
-      orderBy: {
-        createdAt: "desc"     // 最新的排前面
-      }
-    });
+    const { data: needs, error } = await supabase
+      .from("needs")
+      .select(`
+        *,
+        submitter:users(id, name, email),
+        votes:votes(count)
+      `)
+      .order("createdAt", { ascending: false });
 
-    return NextResponse.json(needs);
+    if (error) throw error;
+
+    // 转换格式，让前端读取票数更方便
+    const result = needs.map((need) => ({
+      ...need,
+      _count: { votes: need.votes?.[0]?.count ?? 0 },
+      submitter: Array.isArray(need.submitter) ? need.submitter[0] : need.submitter,
+    }));
+
+    return NextResponse.json(result);
   } catch (error) {
     console.error("获取需求列表失败:", error);
     return NextResponse.json(
@@ -32,7 +38,6 @@ export async function POST(request) {
     const body = await request.json();
     const { title, description, submitterName } = body;
 
-    // 校验：标题不能为空
     if (!title || !title.trim()) {
       return NextResponse.json(
         { error: "需求标题不能为空" },
@@ -40,37 +45,51 @@ export async function POST(request) {
       );
     }
 
+    const name = submitterName || "匿名";
+
     // 查找或创建提交人
-    const submitterName_final = submitterName || "匿名";
-    let user = await prisma.user.findFirst({
-      where: { name: submitterName_final }
-    });
+    let { data: users } = await supabase
+      .from("users")
+      .select("id, name")
+      .eq("name", name)
+      .limit(1);
+
+    let user = users?.[0];
 
     if (!user) {
-      user = await prisma.user.create({
-        data: {
-          name: submitterName_final,
-          role: "submitter"
-        }
-      });
+      const { data: newUsers, error: createError } = await supabase
+        .from("users")
+        .insert({ name, role: "submitter" })
+        .select("id, name");
+
+      if (createError) throw createError;
+      user = newUsers?.[0];
     }
 
     // 创建需求
-    const need = await prisma.need.create({
-      data: {
+    const { data: newNeeds, error: needError } = await supabase
+      .from("needs")
+      .insert({
         title: title.trim(),
         description: description || "",
         submitterId: user.id,
-      },
-      include: {
-        submitter: true,
-        _count: {
-          select: { votes: true }
-        }
-      }
-    });
+      })
+      .select(`
+        *,
+        submitter:users(id, name, email),
+        votes:votes(count)
+      `);
 
-    return NextResponse.json(need, { status: 201 });
+    if (needError) throw needError;
+
+    const need = newNeeds[0];
+    const result = {
+      ...need,
+      _count: { votes: need.votes?.[0]?.count ?? 0 },
+      submitter: Array.isArray(need.submitter) ? need.submitter[0] : need.submitter,
+    };
+
+    return NextResponse.json(result, { status: 201 });
   } catch (error) {
     console.error("创建需求失败:", error);
     return NextResponse.json(

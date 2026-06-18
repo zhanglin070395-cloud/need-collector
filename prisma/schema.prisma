@@ -1,6 +1,3 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,44 +7,44 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ============================================
-// 📋 用户表 —— 存所有"人"的信息
-// ============================================
+// 用户表
 model User {
   id        Int      @id @default(autoincrement())
-  name      String                           // 名字
-  email     String?  @unique                 // 邮箱（可选，但唯一）
-  role      String   @default("submitter")   // 角色：submitter(提交者) / pm(管理员)
-  createdAt DateTime @default(now())         // 注册时间
+  name      String
+  email     String?  @unique
+  role      String   @default("submitter")
+  createdAt DateTime @default(now())
 
-  needs     Need[]   // 这个人提交的所有需求
-  votes     Vote[]   // 这个人的所有投票记录
+  needs     Need[]
+  votes     Vote[]
+
+  @@map("users")
 }
 
-// ============================================
-// 📌 需求表 —— 存所有需求
-// ============================================
+// 需求表
 model Need {
   id          Int      @id @default(autoincrement())
-  title       String                           // 需求标题
-  description String?                          // 需求描述（可选）
-  status      String   @default("待评审")       // 状态：待评审 / 已排期 / 已上线 / 已拒绝
-  submitterId Int                              // 提交人 id → 指向 User 表
-  createdAt   DateTime @default(now())         // 提交时间
+  title       String
+  description String?
+  status      String   @default("待评审")
+  submitterId Int
+  createdAt   DateTime @default(now())
 
   submitter   User     @relation(fields: [submitterId], references: [id])
-  votes       Vote[]   // 这条需求的所有投票记录
+  votes       Vote[]
+
+  @@map("needs")
 }
 
-// ============================================
-// 🗳️ 投票表 —— 存"谁投了哪条需求"
-// ============================================
+// 投票表
 model Vote {
   id        Int      @id @default(autoincrement())
-  needId    Int                              // 投了哪条需求 → 指向 Need 表
-  voterId   Int                              // 谁投的 → 指向 User 表
-  createdAt DateTime @default(now())         // 投票时间
+  needId    Int
+  voterId   Int
+  createdAt DateTime @default(now())
 
   need      Need     @relation(fields: [needId], references: [id])
   voter     User     @relation(fields: [voterId], references: [id])
+
+  @@map("votes")
 }
