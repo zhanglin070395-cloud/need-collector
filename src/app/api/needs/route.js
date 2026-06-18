@@ -1,9 +1,10 @@
 import { NextResponse } from "next/server";
-import { supabase } from "@/lib/supabase";
+import { getSupabase } from "@/lib/supabase";
 
 // GET —— 获取所有需求列表
 export async function GET() {
   try {
+    const supabase = getSupabase();
     const { data: needs, error } = await supabase
       .from("needs")
       .select(`
@@ -35,6 +36,7 @@ export async function GET() {
 // POST —— 提交一条新需求
 export async function POST(request) {
   try {
+    const supabase = getSupabase();
     const body = await request.json();
     const { title, description, submitterName } = body;
 
