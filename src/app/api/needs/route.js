@@ -2,9 +2,16 @@ import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
 
 // GET —— 获取所有需求列表
-export async function GET() {
+export async function GET(request) {
   try {
     const supabase = getSupabase();
+
+    // 从 URL 参数获取当前用户 id
+    const { searchParams } = new URL(request.url);
+    const voterIdRaw = searchParams.get("userId") || null;
+    const voterId = voterIdRaw ? parseInt(voterIdRaw, 10) : null;
+
+    // 获取需求列表
     const { data: needs, error } = await supabase
       .from("needs")
       .select(`
@@ -16,20 +23,34 @@ export async function GET() {
 
     if (error) throw error;
 
-    // 转换格式，让前端读取票数更方便
+    // 如果有 userId，批量查该用户投了哪些需求
+    let votedNeedIds = new Set();
+    if (voterId && needs.length > 0) {
+      const { data: myVotes } = await supabase
+        .from("votes")
+        .select("needId")
+        .eq("voterId", voterId)
+        .in("needId", needs.map((n) => n.id));
+
+      if (myVotes) {
+        myVotes.forEach((v) => votedNeedIds.add(v.needId));
+      }
+    }
+
+    // 组装返回数据
     const result = needs.map((need) => ({
       ...need,
       _count: { votes: need.votes?.[0]?.count ?? 0 },
-      submitter: Array.isArray(need.submitter) ? need.submitter[0] : need.submitter,
+      _hasVoted: votedNeedIds.has(need.id),
+      submitter: Array.isArray(need.submitter)
+        ? need.submitter[0]
+        : need.submitter,
     }));
 
     return NextResponse.json(result);
   } catch (error) {
     console.error("获取需求列表失败:", error);
-    return NextResponse.json(
-      { error: "获取需求列表失败" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "获取需求列表失败" }, { status: 500 });
   }
 }
 
@@ -38,43 +59,32 @@ export async function POST(request) {
   try {
     const supabase = getSupabase();
     const body = await request.json();
-    const { title, description, submitterName } = body;
+    const { title, description, userId } = body;
 
     if (!title || !title.trim()) {
-      return NextResponse.json(
-        { error: "需求标题不能为空" },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "需求标题不能为空" }, { status: 400 });
     }
 
-    const name = submitterName || "匿名";
+    const submitterId = userId || null;
 
-    // 查找或创建提交人
-    let { data: users } = await supabase
-      .from("users")
-      .select("id, name")
-      .eq("name", name)
-      .limit(1);
-
-    let user = users?.[0];
-
-    if (!user) {
-      const { data: newUsers, error: createError } = await supabase
+    if (submitterId) {
+      const { data: user } = await supabase
         .from("users")
-        .insert({ name, role: "submitter" })
-        .select("id, name");
+        .select("id")
+        .eq("id", submitterId)
+        .limit(1);
 
-      if (createError) throw createError;
-      user = newUsers?.[0];
+      if (!user || user.length === 0) {
+        return NextResponse.json({ error: "用户不存在" }, { status: 400 });
+      }
     }
 
-    // 创建需求
     const { data: newNeeds, error: needError } = await supabase
       .from("needs")
       .insert({
         title: title.trim(),
         description: description || "",
-        submitterId: user.id,
+        submitterId,
       })
       .select(`
         *,
@@ -88,15 +98,13 @@ export async function POST(request) {
     const result = {
       ...need,
       _count: { votes: need.votes?.[0]?.count ?? 0 },
+      _hasVoted: false,
       submitter: Array.isArray(need.submitter) ? need.submitter[0] : need.submitter,
     };
 
     return NextResponse.json(result, { status: 201 });
   } catch (error) {
     console.error("创建需求失败:", error);
-    return NextResponse.json(
-      { error: "创建需求失败" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "创建需求失败" }, { status: 500 });
   }
 }
