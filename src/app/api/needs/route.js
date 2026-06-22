@@ -1,50 +1,80 @@
 import { NextResponse } from "next/server";
 import { getSupabase } from "@/lib/supabase";
 
-// GET —— 获取所有需求列表
+const ALLOWED_STATUSES = ["待评审", "已排期", "已上线", "已拒绝"];
+
+// GET —— 获取需求列表（支持筛选+排序）
 export async function GET(request) {
   try {
     const supabase = getSupabase();
 
-    // 从 URL 参数获取当前用户 id
     const { searchParams } = new URL(request.url);
     const voterIdRaw = searchParams.get("userId") || null;
     const voterId = voterIdRaw ? parseInt(voterIdRaw, 10) : null;
+    const status = searchParams.get("status") || null;
+    const sort = searchParams.get("sort") || "time"; // time | votes
+    const search = searchParams.get("search") || null;
 
-    // 获取需求列表
-    const { data: needs, error } = await supabase
+    // 构建查询
+    let query = supabase
       .from("needs")
       .select(`
         *,
         submitter:users(id, name, email),
         votes:votes(count)
-      `)
-      .order("createdAt", { ascending: false });
+      `);
+
+    // 按状态筛选
+    if (status && ALLOWED_STATUSES.includes(status)) {
+      query = query.eq("status", status);
+    }
+
+    // 按标题搜索
+    if (search && search.trim()) {
+      query = query.ilike("title", `%${search.trim()}%`);
+    }
+
+    // 排序
+    if (sort === "votes") {
+      // Supabase 不支持按关联表 count 直接排序，用本地排序代替
+      query = query.order("createdAt", { ascending: false });
+    } else {
+      query = query.order("createdAt", { ascending: false });
+    }
+
+    const { data: needs, error } = await query;
 
     if (error) throw error;
 
-    // 如果有 userId，批量查该用户投了哪些需求
+    // 如果是按票数排序，前端自己排
+    let sorted = needs;
+    if (sort === "votes") {
+      sorted = needs.sort((a, b) => {
+        const aVotes = a.votes?.[0]?.count ?? 0;
+        const bVotes = b.votes?.[0]?.count ?? 0;
+        return bVotes - aVotes;
+      });
+    }
+
+    // 查当前用户投了哪些需求
     let votedNeedIds = new Set();
-    if (voterId && needs.length > 0) {
+    if (voterId && sorted.length > 0) {
       const { data: myVotes } = await supabase
         .from("votes")
         .select("needId")
         .eq("voterId", voterId)
-        .in("needId", needs.map((n) => n.id));
+        .in("needId", sorted.map((n) => n.id));
 
       if (myVotes) {
         myVotes.forEach((v) => votedNeedIds.add(v.needId));
       }
     }
 
-    // 组装返回数据
-    const result = needs.map((need) => ({
+    const result = sorted.map((need) => ({
       ...need,
       _count: { votes: need.votes?.[0]?.count ?? 0 },
       _hasVoted: votedNeedIds.has(need.id),
-      submitter: Array.isArray(need.submitter)
-        ? need.submitter[0]
-        : need.submitter,
+      submitter: Array.isArray(need.submitter) ? need.submitter[0] : need.submitter,
     }));
 
     return NextResponse.json(result);

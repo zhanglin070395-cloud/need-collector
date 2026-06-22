@@ -1,6 +1,8 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
+import StatusBadge from "@/components/StatusBadge";
 
 function getStoredUser() {
   if (typeof window === "undefined") return null;
@@ -28,6 +30,10 @@ export default function Home() {
   const [currentUser, setCurrentUser] = useState(null); // { id, name }
   const [loginName, setLoginName] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [statusFilter, setStatusFilter] = useState(""); // "" 表示全部
+  const [sortBy, setSortBy] = useState("time"); // time | votes
+  const [search, setSearch] = useState("");
+  const router = useRouter();
 
   // 页面加载：尝试从 localStorage 恢复用户
   useEffect(() => {
@@ -43,7 +49,11 @@ export default function Home() {
 
     async function fetchNeeds() {
       try {
-        const res = await fetch(`/api/needs?userId=${currentUser.id}`);
+        let url = `/api/needs?userId=${currentUser.id}`;
+        if (statusFilter) url += `&status=${statusFilter}`;
+        if (sortBy) url += `&sort=${sortBy}`;
+        if (search.trim()) url += `&search=${encodeURIComponent(search.trim())}`;
+        const res = await fetch(url);
         const data = await res.json();
         setNeeds(data);
       } catch (error) {
@@ -51,7 +61,7 @@ export default function Home() {
       }
     }
     fetchNeeds();
-  }, [currentUser]);
+  }, [currentUser, statusFilter, sortBy, search]);
 
   // 登录/注册
   async function handleLogin(e) {
@@ -146,6 +156,46 @@ export default function Home() {
     }
   }
 
+  // 修改状态
+
+  // 删除需求
+  async function handleDelete(needId, e) {
+    e.stopPropagation();
+    if (!confirm("确定删除？")) return;
+    try {
+      const res = await fetch(`/api/needs/${needId}`, {
+        method: "DELETE",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userId: currentUser.id }),
+      });
+      if (!res.ok) return;
+      setNeeds((prev) => prev.filter((n) => n.id !== needId));
+    } catch (error) {
+      console.error("删除失败:", error);
+    }
+  }
+
+  async function handleStatusChange(needId, newStatus) {
+    try {
+      const res = await fetch(`/api/needs/${needId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: newStatus }),
+      });
+
+      if (!res.ok) return;
+
+      // 更新本地状态
+      setNeeds((prev) =>
+        prev.map((n) =>
+          n.id === needId ? { ...n, status: newStatus } : n
+        )
+      );
+    } catch (error) {
+      console.error("状态更新失败:", error);
+    }
+  }
+
   // ====== 未登录 → 显示登录界面 ======
   if (!currentUser) {
     return (
@@ -233,6 +283,45 @@ export default function Home() {
           </button>
         </form>
 
+        {/* 筛选栏 */}
+        <div className="flex items-center gap-3 mb-6 flex-wrap">
+          {/* 搜索 */}
+          <input
+            type="text"
+            placeholder="🔍 搜索需求..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="border border-zinc-300 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 w-48"
+          />
+
+          {/* 状态筛选 */}
+          <select
+            value={statusFilter}
+            onChange={(e) => setStatusFilter(e.target.value)}
+            className="border border-zinc-300 rounded px-3 py-1.5 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+          >
+            <option value="">全部状态</option>
+            <option value="待评审">待评审</option>
+            <option value="已排期">已排期</option>
+            <option value="已上线">已上线</option>
+            <option value="已拒绝">已拒绝</option>
+          </select>
+
+          {/* 排序切换 */}
+          <button
+            onClick={() =>
+              setSortBy((prev) => (prev === "time" ? "votes" : "time"))
+            }
+            className={`text-sm px-3 py-1.5 rounded border transition-colors ${
+              sortBy === "votes"
+                ? "bg-blue-50 border-blue-300 text-blue-700"
+                : "border-zinc-300 text-zinc-600 bg-white"
+            }`}
+          >
+            {sortBy === "votes" ? "🔥 票数最多" : "🕐 最新优先"}
+          </button>
+        </div>
+
         {/* 需求列表 */}
         {needs.length === 0 ? (
           <p className="text-center text-zinc-400 mt-12">
@@ -241,14 +330,20 @@ export default function Home() {
         ) : (
           <div className="space-y-3">
             {needs.map((need) => (
-              <div key={need.id} className="bg-white rounded-lg shadow p-4">
+              <div
+                key={need.id}
+                onClick={() => router.push(`/need/${need.id}`)}
+                className="bg-white rounded-lg shadow p-4 cursor-pointer hover:shadow-md transition-shadow"
+              >
                 <div className="flex items-center justify-between">
                   <h3 className="font-semibold text-zinc-900">
                     {need.title}
                   </h3>
-                  <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full">
-                    {need.status}
-                  </span>
+                  <StatusBadge
+                    needId={need.id}
+                    currentStatus={need.status}
+                    onStatusChange={handleStatusChange}
+                  />
                 </div>
                 {need.description && (
                   <p className="text-sm text-zinc-500 mt-1">
@@ -262,7 +357,10 @@ export default function Home() {
                 </p>
                 <div className="mt-3">
                   <button
-                    onClick={() => handleVote(need.id)}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleVote(need.id);
+                    }}
                     disabled={votingId === need.id}
                     className={`text-sm px-3 py-1 rounded-full border transition-colors ${
                       need._hasVoted
@@ -277,6 +375,14 @@ export default function Home() {
                       : "👍 支持"}
                   </button>
                 </div>
+                {currentUser.id === need.submitterId && (
+                  <button
+                    onClick={(e) => handleDelete(need.id, e)}
+                    className="mt-2 text-xs text-red-400 hover:text-red-600 hover:underline"
+                  >
+                    🗑️ 删除
+                  </button>
+                )}
               </div>
             ))}
           </div>

@@ -17,6 +17,7 @@ model User {
 
   needs     Need[]
   votes     Vote[]
+  comments  Comment[]
 
   @@map("users")
 }
@@ -32,6 +33,7 @@ model Need {
 
   submitter   User     @relation(fields: [submitterId], references: [id])
   votes       Vote[]
+  comments    Comment[]
 
   @@map("needs")
 }
@@ -47,4 +49,18 @@ model Vote {
   voter     User     @relation(fields: [voterId], references: [id])
 
   @@map("votes")
+}
+
+// 评论表
+model Comment {
+  id        Int      @id @default(autoincrement())
+  content   String                              // 评论内容
+  needId    Int                                 // 哪条需求的评论
+  authorId  Int                                 // 谁评论的
+  createdAt DateTime @default(now())
+
+  need      Need     @relation(fields: [needId], references: [id])
+  author    User     @relation(fields: [authorId], references: [id])
+
+  @@map("comments")
 }
